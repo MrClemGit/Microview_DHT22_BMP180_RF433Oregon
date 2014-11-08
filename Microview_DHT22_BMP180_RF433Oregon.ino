@@ -5,6 +5,8 @@
 #include <MicroView.h>
 #include <SFE_BMP180.h>
 #include <Wire.h>
+#define DELAY_MEASURE 300000
+
 // You will need to create an SFE_BMP180 object, here called "pressure":
 
 SFE_BMP180 pressure;
@@ -36,6 +38,7 @@ DHT dht(DHTPIN, DHTTYPE);
 // Example to initialize DHT sensor for Arduino Due:
 //DHT dht(DHTPIN, DHTTYPE, 30);
 //#define THN132N
+//#define BTHR968 KO
  
 const byte TX_PIN = 3;
  
@@ -48,6 +51,8 @@ const unsigned long TWOTIME = TIME*2;
 // Buffer for Oregon message
 #ifdef THN132N
   byte OregonMessageBuffer[8];
+#elif defined(BTHR968)
+  byte OregonMessageBuffer[10];
 #else
   byte OregonMessageBuffer[9];
 #endif
@@ -212,6 +217,10 @@ inline void setId(byte *data, byte ID)
 {
   data[3] = ID;
 }
+void setLastBaro(byte *data, byte lastbyte)
+{
+  data[9] = lastbyte;
+}
  
 /**
  * \brief    Set the sensor battery level
@@ -267,6 +276,24 @@ void setHumidity(byte* data, byte hum)
     data[7] = (hum/10);
     data[6] |= (hum - data[7]*10) << 4;
 }
+/**
+ * \brief    Set the sensor humidity
+ * \param    data       Oregon message
+ * \param    hum        the humidity
+ */
+void setBarometric(byte* data, int bar)
+{
+    byte l_bardata = (byte)(bar-856);
+	if (l_bardata>255)
+		l_bardata=255;
+	data[8] = l_bardata;
+	
+	Serial.println();
+  Serial.print("Bar raw: ");
+  Serial.print(l_bardata,HEX);
+  Serial.print("\n");
+    
+}
  
 /**
  * \brief    Sum data for checksum
@@ -299,6 +326,9 @@ void calculateAndSetChecksum(byte* data)
     int s = ((Sum(6, data) + (data[6]&0xF) - 0xa) & 0xff);
  
     data[6] |=  (s&0x0F) << 4;     data[7] =  (s&0xF0) >> 4;
+#elif defined(BTHR968)
+	
+data[9] = 0x31;
 #else
     data[8] = ((Sum(8, data) - 0xa) & 0xFF);
 #endif
@@ -317,14 +347,25 @@ void setup() {
 #ifdef THN132N 
   // Create the Oregon message for a temperature only sensor (TNHN132N)
   byte ID[] = {0xEA,0x4C};
+#elif defined(BTHR968)
+  
+  byte ID[] = {0x5A,0x6D};
 #else
   // Create the Oregon message for a temperature/humidity sensor (THGR2228N)
   byte ID[] = {0x1A,0x2D};
-#endif 
+#endif
+setType(OregonMessageBuffer, ID);
+#ifdef BTHR968 
  
-  setType(OregonMessageBuffer, ID);
+  setChannel(OregonMessageBuffer, 0x4);
+  setId(OregonMessageBuffer, 0x7A);
+  
+  #else
+   
   setChannel(OregonMessageBuffer, 0x20);
   setId(OregonMessageBuffer, 0xBB);
+  
+  #endif
  uView.begin();		// begin of MicroView
 	uView.clear(ALL);	// erase hardware memory inside the OLED controller
 	//uView.display();	// display the content in the buffer memory, by default it is the MicroView logo
@@ -347,6 +388,7 @@ void setup() {
 void loop() {
   // Wait a few seconds between measurements.
   //delay(2000);
+
 
 
   char status;
@@ -516,9 +558,27 @@ void loop() {
   // Set Humidity
   setHumidity(OregonMessageBuffer, h);
 #endif 
+#ifdef BTHR968
+ setBarometric(OregonMessageBuffer,(int) p0);
+ //setLastBaro(OregonMessageBuffer,0x31);
  
-  // Calculate the checksum
+
+#endif
+// Calculate the checksum
   calculateAndSetChecksum(OregonMessageBuffer);
+
+//TEST
+  /*OregonMessageBuffer[0]= 0x5A; 
+  OregonMessageBuffer[1]= 0x6D;
+  OregonMessageBuffer[2]= 0x00;
+  OregonMessageBuffer[3]= 0x7A;
+  OregonMessageBuffer[4]= 0x10;
+  OregonMessageBuffer[5]= 0x23;
+  OregonMessageBuffer[6]= 0x30;
+  OregonMessageBuffer[7]= 0x83;
+  OregonMessageBuffer[8]= 0x86;
+  OregonMessageBuffer[9]= 0x31;*/
+  
  
   // Show the Oregon Message
   for (byte i = 0; i < sizeof(OregonMessageBuffer); ++i)   {     Serial.print(OregonMessageBuffer[i] >> 4, HEX);
@@ -536,5 +596,5 @@ void loop() {
  
   // Wait for 30 seconds before send a new message
   SEND_LOW();
-  delay(30000);
+  delay(DELAY_MEASURE);
 }
