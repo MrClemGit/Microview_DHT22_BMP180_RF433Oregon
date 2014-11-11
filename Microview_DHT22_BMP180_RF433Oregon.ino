@@ -5,20 +5,26 @@
 #include <MicroView.h>
 
 #include <Wire.h>
-#define DELAY_MEASURE 60000
+#define DELAY_MEASURE 60000		//1min
+#define DELAY_BATTERY 1800000 //30min
 //#define THN132N
 //#define BTHR968 KO
-#define BMP_180
+//#define BMP_180
+
+
+#include "MAX17043.h"
+MAX17043 batteryMonitor;
 
 long  previousMillis  =   0 ;   // will store last time LED was updated
+long  previousBatMillis  =   0 ; 
 bool firstdata = false;
+
 // You will need to create an SFE_BMP180 object, here called "pressure":
 
 #ifdef BMP_180
 #include <SFE_BMP180.h>
 SFE_BMP180 pressure;
 #define ALTITUDE 147 // Altitude of Toulouse in meters
-
 #endif
 
 #define DHTPIN 2     // what pin we're connected to
@@ -343,11 +349,18 @@ void calculateAndSetChecksum(byte* data)
   data[8] = ((Sum(8, data) - 0xa) & 0xFF);
 #endif
 }
+void DisplayDbgMessageOnMV(char*string)
+{
+	uView.setCursor(0,0);
+	uView.print(string);
+        uView.display();
 
+}
 
 void setup() {
   pinMode(TX_PIN, OUTPUT);
-
+  Wire.begin();
+  
   Serial.begin(9600);
   Serial.println("DHTxx test!");
   Serial.println("\n[Oregon V2.1 encoder]");
@@ -368,40 +381,47 @@ void setup() {
     0x1A,0x2D  };
 #endif
   setType(OregonMessageBuffer, ID);
-#ifdef BTHR968
 
+#ifdef BTHR968
   setChannel(OregonMessageBuffer, 0x4);
   setId(OregonMessageBuffer, 0x7A);
-
 #else
-
   setChannel(OregonMessageBuffer, 0x20);
   setId(OregonMessageBuffer, 0xBB);
-
 #endif
+
   uView.begin();		// begin of MicroView
   uView.clear(ALL);	// erase hardware memory inside the OLED controller
-  //uView.display();	// display the content in the buffer memory, by default it is the MicroView logo
+  uView.display();	// display the content in the buffer memory, by default it is the MicroView logo
   uView.clear(PAGE);	// erase the memory buffer, when next uView.display() is called, the OLED will be cleared.
   dht.begin();
-  #ifdef BMP_180
+  
+#ifdef BMP_180
   if (pressure.begin())
+  {
     Serial.println("BMP180 init success");
+	DisplayDbgMessageOnMV("BMP180 init success");
+  }
   else
   {
     // Oops, something went wrong, this is usually a connection problem,
     // see the comments at the top of this sketch for the proper connections.
-
     Serial.println("BMP180 init fail\n\n");
+	DisplayDbgMessageOnMV("BMP180 init fail");
     while(1); // Pause forever.
   }
-  #endif
+#endif
   firstdata=true;
-
+ 
+  
 }
 
 void GetDataAndSend()
 {
+  // Wait a few seconds between measurements.
+  if (firstdata == true)
+    delay(2000);
+    
   char status;
 #ifdef BMP_180
   double T,P,p0,a;
@@ -495,13 +515,25 @@ void GetDataAndSend()
           Serial.print(" meters, ");
 
         }
-        else Serial.println("error retrieving pressure measurement\n");
-      }
-      else Serial.println("error starting pressure measurement\n");
+        else
+{		Serial.println("error retrieving pressure measurement\n");
+DisplayDbgMessageOnMV("error retrieving pressure measurement");
+}
+      }else
+{		Serial.println("error starting pressure measurement\n");
+DisplayDbgMessageOnMV("error starting pressure measurement");
+}
+      
     }
-    else Serial.println("error retrieving temperature measurement\n");
-  }
-  else Serial.println("error starting temperature measurement\n");
+    else
+{		Serial.println("error retrieving temperature measurement\n");
+		DisplayDbgMessageOnMV("error retrieving temperature measurement");
+}
+  }else
+{		Serial.println("error starting temperature measurement\n");
+ DisplayDbgMessageOnMV("error starting temperature measurement");
+}
+  
 #endif //BMP_180
   // Reading temperature or humidity takes about 250 milliseconds!
   // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
@@ -514,8 +546,12 @@ void GetDataAndSend()
   // Check if any reads failed and exit early (to try again).
   if (isnan(h) || isnan(t) || isnan(f)) {
     Serial.println("Failed to read from DHT sensor!");
+	DisplayDbgMessageOnMV("Failed to read from DHT sensor!");
     return;
   }
+  
+ 
+  
 
   // Compute heat index
   // Must send in temp in Fahrenheit!
@@ -535,7 +571,7 @@ void GetDataAndSend()
 
 
 
-
+  uView.clear(PAGE);	// erase the memory buffer, when next uView.display() is called, the OLED will be cleared.
   uView.setCursor(0,0);
   uView.print("Hum ");
   uView.setCursor(30,0);
@@ -612,7 +648,28 @@ void GetDataAndSend()
 
 
 }
+void GetBatteryData()
+{
+	float cellVoltage = batteryMonitor.getVCell();
+  /*Serial.print("Voltage:\t\t");
+  Serial.print(cellVoltage, 4);
+  Serial.println("V");*/
+  uView.setCursor(0,20);		
+  uView.print(cellVoltage);			
+  uView.print("V");
+		
 
+  float stateOfCharge = batteryMonitor.getSoC();
+  /*Serial.print("State of charge:\t");
+  Serial.print(stateOfCharge);
+  Serial.println("%");*/
+
+uView.setCursor(0,30);		
+  uView.print(stateOfCharge);			
+  uView.print("%");
+		uView.display(); 
+
+}
 void loop() {
 
 
@@ -622,12 +679,23 @@ void loop() {
   
   if (( currentMillis  -  previousMillis  >  DELAY_MEASURE )||(firstdata==true))
   {
-    if (firstdata == true)
-      firstdata=false;
+    
     
     previousMillis  =  currentMillis ;
     GetDataAndSend();
+	GetBatteryData();
+    if (firstdata == true)
+        firstdata=false;
 
   }
+  if (( currentMillis  -  previousBatMillis  >  DELAY_BATTERY ))
+  {
+	previousBatMillis  =  currentMillis ;
+	GetBatteryData();
+    
+		
+}
+  
+  
 }
 
