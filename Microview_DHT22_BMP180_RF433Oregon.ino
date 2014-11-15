@@ -6,7 +6,9 @@
 
 #include <Wire.h>
 #define DELAY_MEASURE 60000		//1min
-#define DELAY_BATTERY 1800000 //30min
+#define DELAY_BATTERY 60000 //1Min
+#define DELAY_DISPLAY 60000
+#define DURATION_DISPLAY 10000
 //#define THN132N
 //#define BTHR968 KO
 //#define BMP_180
@@ -14,10 +16,31 @@
 
 #include "MAX17043.h"
 MAX17043 batteryMonitor;
+long  previousBatMillis  =   0 ;
+float previousBatValue =0;
+float cellVoltage =0;
+float stateOfCharge =0;
+float deriv =0;
+float previousderiv=0;
+unsigned int counterdelay =1;
 
 long  previousMillis  =   0 ;   // will store last time LED was updated
-long  previousBatMillis  =   0 ; 
 bool firstdata = false;
+
+bool firstdisplay=false;
+long previousDisplayMillis =0;
+bool bScreenOn=false;
+
+float h = 0;
+// Read temperature as Celsius
+float t = 0;
+// Read temperature as Fahrenheit
+float f = 0;
+float hi = 0;
+
+
+
+
 
 // You will need to create an SFE_BMP180 object, here called "pressure":
 
@@ -25,6 +48,7 @@ bool firstdata = false;
 #include <SFE_BMP180.h>
 SFE_BMP180 pressure;
 #define ALTITUDE 147 // Altitude of Toulouse in meters
+double T,P,p0,a;
 #endif
 
 #define DHTPIN 2     // what pin we're connected to
@@ -71,65 +95,65 @@ byte OregonMessageBuffer[9];
 #endif
 
 /**
- * \brief    Send logical "0" over RF
- * \details  azero bit be represented by an off-to-on transition
- * \         of the RF signal at the middle of a clock period.
- * \         Remenber, the Oregon v2.1 protocol add an inverted bit first
- */
+* \brief    Send logical "0" over RF
+* \details  azero bit be represented by an off-to-on transition
+* \         of the RF signal at the middle of a clock period.
+* \         Remenber, the Oregon v2.1 protocol add an inverted bit first
+*/
 inline void sendZero(void)
 {
-  SEND_HIGH();
-  delayMicroseconds(TIME);
-  SEND_LOW();
-  delayMicroseconds(TWOTIME);
-  SEND_HIGH();
-  delayMicroseconds(TIME);
+	SEND_HIGH();
+	delayMicroseconds(TIME);
+	SEND_LOW();
+	delayMicroseconds(TWOTIME);
+	SEND_HIGH();
+	delayMicroseconds(TIME);
 }
 
 /**
- * \brief    Send logical "1" over RF
- * \details  a one bit be represented by an on-to-off transition
- * \         of the RF signal at the middle of a clock period.
- * \         Remenber, the Oregon v2.1 protocol add an inverted bit first
- */
+* \brief    Send logical "1" over RF
+* \details  a one bit be represented by an on-to-off transition
+* \         of the RF signal at the middle of a clock period.
+* \         Remenber, the Oregon v2.1 protocol add an inverted bit first
+*/
 inline void sendOne(void)
 {
-  SEND_LOW();
-  delayMicroseconds(TIME);
-  SEND_HIGH();
-  delayMicroseconds(TWOTIME);
-  SEND_LOW();
-  delayMicroseconds(TIME);
+	SEND_LOW();
+	delayMicroseconds(TIME);
+	SEND_HIGH();
+	delayMicroseconds(TWOTIME);
+	SEND_LOW();
+	delayMicroseconds(TIME);
 }
 
 /**
- * Send a bits quarter (4 bits = MSB from 8 bits value) over RF
- *
- * @param data Source data to process and sent
- */
+* Send a bits quarter (4 bits = MSB from 8 bits value) over RF
+*
+* @param data Source data to process and sent
+*/
 
 /**
- * \brief    Send a bits quarter (4 bits = MSB from 8 bits value) over RF
- * \param    data   Data to send
- */
+* \brief    Send a bits quarter (4 bits = MSB from 8 bits value) over RF
+* \param    data   Data to send
+*/
 inline void sendQuarterMSB(const byte data)
 {
-  (bitRead(data, 4)) ? sendOne() : sendZero();
-  (bitRead(data, 5)) ? sendOne() : sendZero();
-  (bitRead(data, 6)) ? sendOne() : sendZero();
-  (bitRead(data, 7)) ? sendOne() : sendZero();
+	(bitRead(data, 4)) ? sendOne() : sendZero();
+	(bitRead(data, 5)) ? sendOne() : sendZero();
+	(bitRead(data, 6)) ? sendOne() : sendZero();
+	(bitRead(data, 7)) ? sendOne() : sendZero();
 }
 
 /**
- * \brief    Send a bits quarter (4 bits = LSB from 8 bits value) over RF
- * \param    data   Data to send
- */
+* \brief    Send a bits quarter (4 bits = LSB from 8 bits value) over RF
+* \param    data   Data to send
+*/
 inline void sendQuarterLSB(const byte data)
 {
-  (bitRead(data, 0)) ? sendOne() : sendZero();
-  (bitRead(data, 1)) ? sendOne() : sendZero();
-  (bitRead(data, 2)) ? sendOne() : sendZero();
-  (bitRead(data, 3)) ? sendOne() : sendZero();
+	(bitRead(data, 0)) ? sendOne() : sendZero();
+	(bitRead(data, 1)) ? sendOne() : sendZero();
+	(bitRead(data, 2)) ? sendOne() : sendZero();
+	(bitRead(data, 3)) ? sendOne() : sendZero();
 }
 
 /******************************************************************/
@@ -137,65 +161,65 @@ inline void sendQuarterLSB(const byte data)
 /******************************************************************/
 
 /**
- * \brief    Send a buffer over RF
- * \param    data   Data to send
- * \param    size   size of data to send
- */
+* \brief    Send a buffer over RF
+* \param    data   Data to send
+* \param    size   size of data to send
+*/
 void sendData(byte *data, byte size)
 {
-  for(byte i = 0; i < size; ++i)
-  {
-    sendQuarterLSB(data[i]);
-    sendQuarterMSB(data[i]);
-  }
+	for(byte i = 0; i < size; ++i)
+	{
+		sendQuarterLSB(data[i]);
+		sendQuarterMSB(data[i]);
+	}
 }
 
 /**
- * \brief    Send an Oregon message
- * \param    data   The Oregon message
- */
+* \brief    Send an Oregon message
+* \param    data   The Oregon message
+*/
 void sendOregon(byte *data, byte size)
 {
-  sendPreamble();
-  //sendSync();
-  sendData(data, size);
-  sendPostamble();
+	sendPreamble();
+	//sendSync();
+	sendData(data, size);
+	sendPostamble();
 }
 
 /**
- * \brief    Send preamble
- * \details  The preamble consists of 16 "1" bits
- */
+* \brief    Send preamble
+* \details  The preamble consists of 16 "1" bits
+*/
 inline void sendPreamble(void)
 {
-  byte PREAMBLE[]={
-    0xFF,0xFF  };
-  sendData(PREAMBLE, 2);
+	byte PREAMBLE[]={
+		0xFF,0xFF  };
+	sendData(PREAMBLE, 2);
 }
 
 /**
- * \brief    Send postamble
- * \details  The postamble consists of 8 "0" bits
- */
+* \brief    Send postamble
+* \details  The postamble consists of 8 "0" bits
+*/
 inline void sendPostamble(void)
 {
 #ifdef THN132N
-  sendQuarterLSB(0x00);
+	sendQuarterLSB(0x00);
 #else
-  byte POSTAMBLE[]={
-    0x00  };
-  sendData(POSTAMBLE, 1);
+	byte POSTAMBLE[]={
+		0x00  };
+	sendData(POSTAMBLE, 1);
 #endif
 }
 
 /**
- * \brief    Send sync nibble
- * \details  The sync is 0xA. It is not use in this version since the sync nibble
- * \         is include in the Oregon message to send.
- */
+* \brief    Send sync nibble
+* \details  The sync is 0xA. It is not use in this version since the sync nibble
+* \         is include in the Oregon message to send.
+*/
 inline void sendSync(void)
 {
-  sendQuarterLSB(0xA);
+	sendQuarterLSB(0xA);
 }
 
 /******************************************************************/
@@ -203,499 +227,577 @@ inline void sendSync(void)
 /******************************************************************/
 
 /**
- * \brief    Set the sensor type
- * \param    data       Oregon message
- * \param    type       Sensor type
- */
+* \brief    Set the sensor type
+* \param    data       Oregon message
+* \param    type       Sensor type
+*/
 inline void setType(byte *data, byte* type)
 {
-  data[0] = type[0];
-  data[1] = type[1];
+	data[0] = type[0];
+	data[1] = type[1];
 }
 
 /**
- * \brief    Set the sensor channel
- * \param    data       Oregon message
- * \param    channel    Sensor channel (0x10, 0x20, 0x30)
- */
+* \brief    Set the sensor channel
+* \param    data       Oregon message
+* \param    channel    Sensor channel (0x10, 0x20, 0x30)
+*/
 inline void setChannel(byte *data, byte channel)
 {
-  data[2] = channel;
+	data[2] = channel;
 }
 
 /**
- * \brief    Set the sensor ID
- * \param    data       Oregon message
- * \param    ID         Sensor unique ID
- */
+* \brief    Set the sensor ID
+* \param    data       Oregon message
+* \param    ID         Sensor unique ID
+*/
 inline void setId(byte *data, byte ID)
 {
-  data[3] = ID;
+	data[3] = ID;
 }
 void setLastBaro(byte *data, byte lastbyte)
 {
-  data[9] = lastbyte;
+	data[9] = lastbyte;
 }
 
 /**
- * \brief    Set the sensor battery level
- * \param    data       Oregon message
- * \param    level      Battery level (0 = low, 1 = high)
- */
+* \brief    Set the sensor battery level
+* \param    data       Oregon message
+* \param    level      Battery level (0 = low, 1 = high)
+*/
 void setBatteryLevel(byte *data, byte level)
 {
-  if(!level) data[4] = 0x0C;
-  else data[4] = 0x00;
+	if(!level) data[4] = 0x0C;
+	else data[4] = 0x00;
 }
 
 /**
- * \brief    Set the sensor temperature
- * \param    data       Oregon message
- * \param    temp       the temperature
- */
+* \brief    Set the sensor temperature
+* \param    data       Oregon message
+* \param    temp       the temperature
+*/
 void setTemperature(byte *data, float temp)
 {
-  // Set temperature sign
-  if(temp < 0)
-  {
-    data[6] = 0x08;
-    temp *= -1;
-  }
-  else
-  {
-    data[6] = 0x00;
-  }
+	// Set temperature sign
+	if(temp < 0)
+	{
+		data[6] = 0x08;
+		temp *= -1;
+	}
+	else
+	{
+		data[6] = 0x00;
+	}
 
-  // Determine decimal and float part
-  int tempInt = (int)temp;
-  int td = (int)(tempInt / 10);
-  int tf = (int)round((float)((float)tempInt/10 - (float)td) * 10);
+	// Determine decimal and float part
+	int tempInt = (int)temp;
+	int td = (int)(tempInt / 10);
+	int tf = (int)round((float)((float)tempInt/10 - (float)td) * 10);
 
-  int tempFloat =  (int)round((float)(temp - (float)tempInt) * 10);
+	int tempFloat =  (int)round((float)(temp - (float)tempInt) * 10);
 
-  // Set temperature decimal part
-  data[5] = (td << 4);
-  data[5] |= tf;
+	// Set temperature decimal part
+	data[5] = (td << 4);
+	data[5] |= tf;
 
-  // Set temperature float part
-  data[4] |= (tempFloat << 4);
+	// Set temperature float part
+	data[4] |= (tempFloat << 4);
 }
 
 /**
- * \brief    Set the sensor humidity
- * \param    data       Oregon message
- * \param    hum        the humidity
- */
+* \brief    Set the sensor humidity
+* \param    data       Oregon message
+* \param    hum        the humidity
+*/
 void setHumidity(byte* data, byte hum)
 {
-  data[7] = (hum/10);
-  data[6] |= (hum - data[7]*10) << 4;
+	data[7] = (hum/10);
+	data[6] |= (hum - data[7]*10) << 4;
 }
 /**
- * \brief    Set the sensor humidity
- * \param    data       Oregon message
- * \param    hum        the humidity
- */
+* \brief    Set the sensor humidity
+* \param    data       Oregon message
+* \param    hum        the humidity
+*/
 void setBarometric(byte* data, int bar)
 {
-  byte l_bardata = (byte)(bar-856);
-  if (l_bardata>255)
-    l_bardata=255;
-  data[8] = l_bardata;
+	byte l_bardata = (byte)(bar-856);
+	if (l_bardata>255)
+	l_bardata=255;
+	data[8] = l_bardata;
 
-  Serial.println();
-  Serial.print("Bar raw: ");
-  Serial.print(l_bardata,HEX);
-  Serial.print("\n");
+	Serial.println();
+	Serial.print("Bar raw: ");
+	Serial.print(l_bardata,HEX);
+	Serial.print("\n");
 
 }
 
 /**
- * \brief    Sum data for checksum
- * \param    count      number of bit to sum
- * \param    data       Oregon message
- */
+* \brief    Sum data for checksum
+* \param    count      number of bit to sum
+* \param    data       Oregon message
+*/
 int Sum(byte count, const byte* data)
 {
-  int s = 0;
+	int s = 0;
 
-  for(byte i = 0; i<count;i++)
-  {
-    s += (data[i]&0xF0) >> 4;
-    s += (data[i]&0xF);
-  }
+	for(byte i = 0; i<count;i++)
+	{
+		s += (data[i]&0xF0) >> 4;
+		s += (data[i]&0xF);
+	}
 
-  if(int(count) != count)
-    s += (data[count]&0xF0) >> 4;
+	if(int(count) != count)
+	s += (data[count]&0xF0) >> 4;
 
-  return s;
+	return s;
 }
 
 /**
- * \brief    Calculate checksum
- * \param    data       Oregon message
- */
+* \brief    Calculate checksum
+* \param    data       Oregon message
+*/
 void calculateAndSetChecksum(byte* data)
 {
 #ifdef THN132N
-  int s = ((Sum(6, data) + (data[6]&0xF) - 0xa) & 0xff);
+	int s = ((Sum(6, data) + (data[6]&0xF) - 0xa) & 0xff);
 
-  data[6] |=  (s&0x0F) << 4;
-  data[7] =  (s&0xF0) >> 4;
+	data[6] |=  (s&0x0F) << 4;
+	data[7] =  (s&0xF0) >> 4;
 #elif defined(BTHR968)
 
-  data[9] = 0x31;
+	data[9] = 0x31;
 #else
-  data[8] = ((Sum(8, data) - 0xa) & 0xFF);
+	data[8] = ((Sum(8, data) - 0xa) & 0xFF);
 #endif
 }
 void DisplayDbgMessageOnMV(char*string)
 {
 	uView.setCursor(0,0);
 	uView.print(string);
-        uView.display();
+	uView.display();
 
 }
 
 void setup() {
-  pinMode(TX_PIN, OUTPUT);
-  Wire.begin();
-  
-  Serial.begin(9600);
-  Serial.println("DHTxx test!");
-  Serial.println("\n[Oregon V2.1 encoder]");
+	pinMode(TX_PIN, OUTPUT);
+	Wire.begin();
 
-  SEND_LOW();
+	Serial.begin(9600);
+	Serial.println("DHTxx test!");
+	Serial.println("\n[Oregon V2.1 encoder]");
+
+	SEND_LOW();
 
 #ifdef THN132N
-  // Create the Oregon message for a temperature only sensor (TNHN132N)
-  byte ID[] = {
-    0xEA,0x4C  };
+	// Create the Oregon message for a temperature only sensor (TNHN132N)
+	byte ID[] = {
+		0xEA,0x4C  };
 #elif defined(BTHR968)
 
-  byte ID[] = {
-    0x5A,0x6D  };
+	byte ID[] = {
+		0x5A,0x6D  };
 #else
-  // Create the Oregon message for a temperature/humidity sensor (THGR2228N)
-  byte ID[] = {
-    0x1A,0x2D  };
+	// Create the Oregon message for a temperature/humidity sensor (THGR2228N)
+	byte ID[] = {
+		0x1A,0x2D  };
 #endif
-  setType(OregonMessageBuffer, ID);
+	setType(OregonMessageBuffer, ID);
 
 #ifdef BTHR968
-  setChannel(OregonMessageBuffer, 0x4);
-  setId(OregonMessageBuffer, 0x7A);
+	setChannel(OregonMessageBuffer, 0x4);
+	setId(OregonMessageBuffer, 0x7A);
 #else
-  setChannel(OregonMessageBuffer, 0x20);
-  setId(OregonMessageBuffer, 0xBB);
+	setChannel(OregonMessageBuffer, 0x20);
+	setId(OregonMessageBuffer, 0xBB);
 #endif
 
-  uView.begin();		// begin of MicroView
-  uView.clear(ALL);	// erase hardware memory inside the OLED controller
-  uView.display();	// display the content in the buffer memory, by default it is the MicroView logo
-  uView.clear(PAGE);	// erase the memory buffer, when next uView.display() is called, the OLED will be cleared.
-  dht.begin();
-  
+	uView.begin();		// begin of MicroView
+	uView.clear(ALL);	// erase hardware memory inside the OLED controller
+	uView.display();	// display the content in the buffer memory, by default it is the MicroView logo
+	uView.clear(PAGE);	// erase the memory buffer, when next uView.display() is called, the OLED will be cleared.
+	dht.begin();
+
 #ifdef BMP_180
-  if (pressure.begin())
-  {
-    Serial.println("BMP180 init success");
-	DisplayDbgMessageOnMV("BMP180 init success");
-  }
-  else
-  {
-    // Oops, something went wrong, this is usually a connection problem,
-    // see the comments at the top of this sketch for the proper connections.
-    Serial.println("BMP180 init fail\n\n");
-	DisplayDbgMessageOnMV("BMP180 init fail");
-    while(1); // Pause forever.
-  }
+	if (pressure.begin())
+	{
+		Serial.println("BMP180 init success");
+		DisplayDbgMessageOnMV("BMP180 init success");
+	}
+	else
+	{
+		// Oops, something went wrong, this is usually a connection problem,
+		// see the comments at the top of this sketch for the proper connections.
+		Serial.println("BMP180 init fail\n\n");
+		DisplayDbgMessageOnMV("BMP180 init fail");
+		while(1); // Pause forever.
+	}
 #endif
-  firstdata=true;
- 
-  
+	firstdata=true;
+	firstdisplay=true;
+
+
 }
 
 void GetDataAndSend()
 {
-  // Wait a few seconds between measurements.
-  if (firstdata == true)
-    delay(2000);
-    
-  char status;
+	Serial.print("\nGetDataAndSend\n");
+	// Wait a few seconds between measurements.
+	if (firstdata == true)
+	delay(2000);
+	
+	char status;
 #ifdef BMP_180
-  double T,P,p0,a;
 
-  // Loop here getting pressure readings every 10 seconds.
+	// Loop here getting pressure readings every 10 seconds.
 
-  // If you want sea-level-compensated pressure, as used in weather reports,
-  // you will need to know the altitude at which your measurements are taken.
-  // We're using a constant called ALTITUDE in this sketch:
+	// If you want sea-level-compensated pressure, as used in weather reports,
+	// you will need to know the altitude at which your measurements are taken.
+	// We're using a constant called ALTITUDE in this sketch:
 
-  Serial.println();
-  Serial.print("provided altitude: ");
-  Serial.print(ALTITUDE,0);
-  Serial.print(" meters, ");
-  Serial.print(ALTITUDE*3.28084,0);
-  Serial.println(" feet\n");
+	Serial.println();
+	Serial.print("provided altitude: ");
+	Serial.print(ALTITUDE,0);
+	Serial.print(" meters, ");
+	Serial.print(ALTITUDE*3.28084,0);
+	Serial.println(" feet\n");
 
-  // If you want to measure altitude, and not pressure, you will instead need
-  // to provide a known baseline pressure. This is shown at the end of the sketch.
+	// If you want to measure altitude, and not pressure, you will instead need
+	// to provide a known baseline pressure. This is shown at the end of the sketch.
 
-  // You must first get a temperature measurement to perform a pressure reading.
+	// You must first get a temperature measurement to perform a pressure reading.
 
-  // Start a temperature measurement:
-  // If request is successful, the number of ms to wait is returned.
-  // If request is unsuccessful, 0 is returned.
+	// Start a temperature measurement:
+	// If request is successful, the number of ms to wait is returned.
+	// If request is unsuccessful, 0 is returned.
 
-  status = pressure.startTemperature();
-  if (status != 0)
-  {
-    // Wait for the measurement to complete:
-    delay(status);
+	status = pressure.startTemperature();
+	if (status != 0)
+	{
+		// Wait for the measurement to complete:
+		delay(status);
 
-    // Retrieve the completed temperature measurement:
-    // Note that the measurement is stored in the variable T.
-    // Function returns 1 if successful, 0 if failure.
+		// Retrieve the completed temperature measurement:
+		// Note that the measurement is stored in the variable T.
+		// Function returns 1 if successful, 0 if failure.
 
-    status = pressure.getTemperature(T);
-    if (status != 0)
-    {
-      // Print out the measurement:
-      Serial.print("temperature: ");
-      Serial.print(T,2);
-      Serial.print(" deg C\n");
-
-
-      // Start a pressure measurement:
-      // The parameter is the oversampling setting, from 0 to 3 (highest res, longest wait).
-      // If request is successful, the number of ms to wait is returned.
-      // If request is unsuccessful, 0 is returned.
-
-      status = pressure.startPressure(3);
-      if (status != 0)
-      {
-        // Wait for the measurement to complete:
-        delay(status);
-
-        // Retrieve the completed pressure measurement:
-        // Note that the measurement is stored in the variable P.
-        // Note also that the function requires the previous temperature measurement (T).
-        // (If temperature is stable, you can do one temperature measurement for a number of pressure measurements.)
-        // Function returns 1 if successful, 0 if failure.
-
-        status = pressure.getPressure(P,T);
-        if (status != 0)
-        {
-          // Print out the measurement:
-          Serial.print("absolute pressure: ");
-          Serial.print(P,2);
-          Serial.print(" mb, ");
+		status = pressure.getTemperature(T);
+		if (status != 0)
+		{
+			// Print out the measurement:
+			Serial.print("temperature: ");
+			Serial.print(T,2);
+			Serial.print(" deg C\n");
 
 
-          // The pressure sensor returns abolute pressure, which varies with altitude.
-          // To remove the effects of altitude, use the sealevel function and your current altitude.
-          // This number is commonly used in weather reports.
-          // Parameters: P = absolute pressure in mb, ALTITUDE = current altitude in m.
-          // Result: p0 = sea-level compensated pressure in mb
+			// Start a pressure measurement:
+			// The parameter is the oversampling setting, from 0 to 3 (highest res, longest wait).
+			// If request is successful, the number of ms to wait is returned.
+			// If request is unsuccessful, 0 is returned.
 
-          p0 = pressure.sealevel(P,ALTITUDE); // we're at 1655 meters (Boulder, CO)
-          Serial.print("relative (sea-level) pressure: ");
-          Serial.print(p0,2);
-          Serial.print(" mb, ");
+			status = pressure.startPressure(3);
+			if (status != 0)
+			{
+				// Wait for the measurement to complete:
+				delay(status);
 
-          // On the other hand, if you want to determine your altitude from the pressure reading,
-          // use the altitude function along with a baseline pressure (sea-level or other).
-          // Parameters: P = absolute pressure in mb, p0 = baseline pressure in mb.
-          // Result: a = altitude in m.
+				// Retrieve the completed pressure measurement:
+				// Note that the measurement is stored in the variable P.
+				// Note also that the function requires the previous temperature measurement (T).
+				// (If temperature is stable, you can do one temperature measurement for a number of pressure measurements.)
+				// Function returns 1 if successful, 0 if failure.
 
-          a = pressure.altitude(P,p0);
-          Serial.print("computed altitude: ");
-          Serial.print(a,0);
-          Serial.print(" meters, ");
+				status = pressure.getPressure(P,T);
+				if (status != 0)
+				{
+					// Print out the measurement:
+					Serial.print("absolute pressure: ");
+					Serial.print(P,2);
+					Serial.print(" mb, ");
 
-        }
-        else
-{		Serial.println("error retrieving pressure measurement\n");
-DisplayDbgMessageOnMV("error retrieving pressure measurement");
-}
-      }else
-{		Serial.println("error starting pressure measurement\n");
-DisplayDbgMessageOnMV("error starting pressure measurement");
-}
-      
-    }
-    else
-{		Serial.println("error retrieving temperature measurement\n");
-		DisplayDbgMessageOnMV("error retrieving temperature measurement");
-}
-  }else
-{		Serial.println("error starting temperature measurement\n");
- DisplayDbgMessageOnMV("error starting temperature measurement");
-}
-  
+
+					// The pressure sensor returns abolute pressure, which varies with altitude.
+					// To remove the effects of altitude, use the sealevel function and your current altitude.
+					// This number is commonly used in weather reports.
+					// Parameters: P = absolute pressure in mb, ALTITUDE = current altitude in m.
+					// Result: p0 = sea-level compensated pressure in mb
+
+					p0 = pressure.sealevel(P,ALTITUDE); // we're at 1655 meters (Boulder, CO)
+					Serial.print("relative (sea-level) pressure: ");
+					Serial.print(p0,2);
+					Serial.print(" mb, ");
+
+					// On the other hand, if you want to determine your altitude from the pressure reading,
+					// use the altitude function along with a baseline pressure (sea-level or other).
+					// Parameters: P = absolute pressure in mb, p0 = baseline pressure in mb.
+					// Result: a = altitude in m.
+
+					a = pressure.altitude(P,p0);
+					Serial.print("computed altitude: ");
+					Serial.print(a,0);
+					Serial.print(" meters, ");
+
+				}
+				else
+				{		Serial.println("error retrieving pressure measurement\n");
+					DisplayDbgMessageOnMV("error retrieving pressure measurement");
+				}
+			}else
+			{		Serial.println("error starting pressure measurement\n");
+				DisplayDbgMessageOnMV("error starting pressure measurement");
+			}
+			
+		}
+		else
+		{		Serial.println("error retrieving temperature measurement\n");
+			DisplayDbgMessageOnMV("error retrieving temperature measurement");
+		}
+	}else
+	{		Serial.println("error starting temperature measurement\n");
+		DisplayDbgMessageOnMV("error starting temperature measurement");
+	}
+
 #endif //BMP_180
-  // Reading temperature or humidity takes about 250 milliseconds!
-  // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
-  float h = dht.readHumidity();
-  // Read temperature as Celsius
-  float t = dht.readTemperature();
-  // Read temperature as Fahrenheit
-  float f = dht.readTemperature(true);
+	// Reading temperature or humidity takes about 250 milliseconds!
+	// Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+	h = dht.readHumidity();
+	// Read temperature as Celsius
+	t = dht.readTemperature();
+	// Read temperature as Fahrenheit
+	f = dht.readTemperature(true);
 
-  // Check if any reads failed and exit early (to try again).
-  if (isnan(h) || isnan(t) || isnan(f)) {
-    Serial.println("Failed to read from DHT sensor!");
-	DisplayDbgMessageOnMV("Failed to read from DHT sensor!");
-    return;
-  }
-  
- 
-  
-
-  // Compute heat index
-  // Must send in temp in Fahrenheit!
-  float hi = dht.computeHeatIndex(f, h);
-
-  Serial.print("Humidity: ");
-  Serial.print(h);
-  Serial.print(" %\t");
-  Serial.print("Temperature: ");
-  Serial.print(t);
-  Serial.print(" °C ");
-  Serial.print(f);
-  Serial.print(" °F\t");
-  Serial.print("Heat index: ");
-  Serial.print(hi);
-  Serial.println(" °F\n");
+	// Check if any reads failed and exit early (to try again).
+	if (isnan(h) || isnan(t) || isnan(f)) {
+		Serial.println("Failed to read from DHT sensor!");
+		DisplayDbgMessageOnMV("Failed to read from DHT sensor!");
+		return;
+	}
 
 
 
-  uView.clear(PAGE);	// erase the memory buffer, when next uView.display() is called, the OLED will be cleared.
-  uView.setCursor(0,0);
-  uView.print("Hum ");
-  uView.setCursor(30,0);
-  uView.print(h);
 
-  //uView.print(" % ");
+	// Compute heat index
+	// Must send in temp in Fahrenheit!
+	hi = dht.computeHeatIndex(f, h);
 
-  uView.setCursor(0,10);
-  uView.print("Temp ");
-  uView.setCursor(30,10);
-  uView.print(t);
-
-  #ifdef BMP_180
-  uView.setCursor(0,20);
-  uView.print("Pr ");
-  uView.setCursor(20,20);
-  uView.print(p0);
-  uView.setCursor(0,30);
-  uView.print("Tp ");
-  uView.setCursor(30,30);
-  uView.print(T);
-  uView.setCursor(35,30);
-  #endif
-
-  uView.display();
+	Serial.print("Humidity: ");
+	Serial.print(h);
+	Serial.print(" %\t");
+	Serial.print("Temperature: ");
+	Serial.print(t);
+	Serial.print(" °C ");
+	Serial.print(f);
+	Serial.print(" °F\t");
+	Serial.print("Heat index: ");
+	Serial.print(hi);
+	Serial.println(" °F\n");
 
 
-  // Get Temperature, humidity and battery level from sensors
-  // (ie: 1wire DS18B20 for température, ...)
-  setBatteryLevel(OregonMessageBuffer, 1); // 0 : low, 1 : high
-  setTemperature(OregonMessageBuffer, t);
+
+
+
+
+
+
+
+
+	// Get Temperature, humidity and battery level from sensors
+	// (ie: 1wire DS18B20 for température, ...)
+	setBatteryLevel(OregonMessageBuffer, 1); // 0 : low, 1 : high
+	setTemperature(OregonMessageBuffer, t);
 
 #ifndef THN132N
-  // Set Humidity
-  setHumidity(OregonMessageBuffer, h);
+	// Set Humidity
+	setHumidity(OregonMessageBuffer, h);
 #endif
 #ifdef BTHR968
-  setBarometric(OregonMessageBuffer,(int) p0);
-  //setLastBaro(OregonMessageBuffer,0x31);
+	setBarometric(OregonMessageBuffer,(int) p0);
+	//setLastBaro(OregonMessageBuffer,0x31);
 #endif
-  // Calculate the checksum
-  calculateAndSetChecksum(OregonMessageBuffer);
+	// Calculate the checksum
+	calculateAndSetChecksum(OregonMessageBuffer);
 
-  //TEST
-  /*OregonMessageBuffer[0]= 0x5A;
-   OregonMessageBuffer[1]= 0x6D;
-   OregonMessageBuffer[2]= 0x00;
-   OregonMessageBuffer[3]= 0x7A;
-   OregonMessageBuffer[4]= 0x10;
-   OregonMessageBuffer[5]= 0x23;
-   OregonMessageBuffer[6]= 0x30;
-   OregonMessageBuffer[7]= 0x83;
-   OregonMessageBuffer[8]= 0x86;
-   OregonMessageBuffer[9]= 0x31;*/
+	//TEST
+	/*OregonMessageBuffer[0]= 0x5A;
+OregonMessageBuffer[1]= 0x6D;
+OregonMessageBuffer[2]= 0x00;
+OregonMessageBuffer[3]= 0x7A;
+OregonMessageBuffer[4]= 0x10;
+OregonMessageBuffer[5]= 0x23;
+OregonMessageBuffer[6]= 0x30;
+OregonMessageBuffer[7]= 0x83;
+OregonMessageBuffer[8]= 0x86;
+OregonMessageBuffer[9]= 0x31;*/
 
 
-  // Show the Oregon Message
-  for (byte i = 0; i < sizeof(OregonMessageBuffer); ++i)   {
-    Serial.print(OregonMessageBuffer[i] >> 4, HEX);
-    Serial.print(OregonMessageBuffer[i] & 0x0F, HEX);
-  }
+	// Show the Oregon Message
+	for (byte i = 0; i < sizeof(OregonMessageBuffer); ++i)   {
+		Serial.print(OregonMessageBuffer[i] >> 4, HEX);
+		Serial.print(OregonMessageBuffer[i] & 0x0F, HEX);
+	}
 
-  // Send the Message over RF
-  sendOregon(OregonMessageBuffer, sizeof(OregonMessageBuffer));
-  // Send a "pause"
-  SEND_LOW();
-  delayMicroseconds(TWOTIME*8);
-  // Send a copie of the first message. The v2.1 protocol send the
-  // message two time
-  sendOregon(OregonMessageBuffer, sizeof(OregonMessageBuffer));
+	// Send the Message over RF
+	sendOregon(OregonMessageBuffer, sizeof(OregonMessageBuffer));
+	// Send a "pause"
+	SEND_LOW();
+	delayMicroseconds(TWOTIME*8);
+	// Send a copie of the first message. The v2.1 protocol send the
+	// message two time
+	sendOregon(OregonMessageBuffer, sizeof(OregonMessageBuffer));
 
-  // Wait for 30 seconds before send a new message
-  SEND_LOW();
+	// Wait for 30 seconds before send a new message
+	SEND_LOW();
 
 
 }
 void GetBatteryData()
 {
-	float cellVoltage = batteryMonitor.getVCell();
-  /*Serial.print("Voltage:\t\t");
-  Serial.print(cellVoltage, 4);
-  Serial.println("V");*/
-  uView.setCursor(0,20);		
-  uView.print(cellVoltage);			
-  uView.print("V");
+	Serial.print("\nGetBatteryData\n");	
+	cellVoltage = batteryMonitor.getVCell();
+	/*Serial.print("Voltage:\t\t");
+Serial.print(cellVoltage, 4);
+Serial.println("V");*/
+
+	
+
+	stateOfCharge = batteryMonitor.getSoC();
+	/*Serial.print("State of charge:\t");
+Serial.print(stateOfCharge);
+Serial.println("%");*/
+
+	
+
+	//Calcul TMP
+	if ((stateOfCharge==previousBatValue)||(previousBatValue==0))
+	{
+		counterdelay++;
+		deriv =0;
+	}
+	else
+	{
+		deriv = (stateOfCharge-previousBatValue)/(DELAY_BATTERY*counterdelay*1.0)*60000;
+		counterdelay=1;
+
 		
+	}
+	
+	
 
-  float stateOfCharge = batteryMonitor.getSoC();
-  /*Serial.print("State of charge:\t");
-  Serial.print(stateOfCharge);
-  Serial.println("%");*/
 
-uView.setCursor(0,30);		
-  uView.print(stateOfCharge);			
-  uView.print("%");
-		uView.display(); 
+	
+	previousBatValue = stateOfCharge;
 
 }
+void DisplayData()
+{
+	Serial.print("\nDisplayData\n");
+	uView.clear(PAGE);	// erase the memory buffer, when next uView.display() is called, the OLED will be cleared.
+	uView.setCursor(0,0);
+	uView.print("Hum ");
+	uView.setCursor(30,0);
+	uView.print(h);
+
+	//uView.print(" % ");
+
+	uView.setCursor(0,10);
+	uView.print("Temp ");
+	uView.setCursor(30,10);
+	uView.print(t);
+#ifdef BMP_180
+	uView.setCursor(0,20);
+	uView.print("Pr ");
+	uView.setCursor(20,20);
+	uView.print(p0);
+	uView.setCursor(0,30);
+	uView.print("Tp ");
+	uView.setCursor(30,30);
+	uView.print(T);
+	uView.setCursor(35,30);
+#endif
+	uView.setCursor(0,20);		
+	uView.print(cellVoltage);			
+	uView.print("V");
+	uView.setCursor(0,30);		
+	uView.print(stateOfCharge);			
+	uView.print("%");
+
+	if (deriv!=0)
+	{
+		uView.setCursor(0,40);		
+		uView.print(deriv);			
+		uView.print("%/min");
+	}
+
+
+	uView.display();
+	bScreenOn = true;
+
+
+
+}
+
+void ClearScreen()
+{
+	Serial.print("\nClearScreen\n");	
+	uView.clear(PAGE);
+	uView.display();
+	bScreenOn = false;
+	
+
+}
+
 void loop() {
 
 
-  unsigned   long  currentMillis  =  millis ();
-  
+	unsigned   long  currentMillis  =  millis ();
 
-  
-  if (( currentMillis  -  previousMillis  >  DELAY_MEASURE )||(firstdata==true))
-  {
-    
-    
-    previousMillis  =  currentMillis ;
-    GetDataAndSend();
-	GetBatteryData();
-    if (firstdata == true)
-        firstdata=false;
 
-  }
-  if (( currentMillis  -  previousBatMillis  >  DELAY_BATTERY ))
-  {
-	previousBatMillis  =  currentMillis ;
-	GetBatteryData();
-    
+
+	if (( currentMillis  -  previousMillis  >  DELAY_MEASURE )||(firstdata==true))
+	{
 		
-}
-  
-  
+		
+		previousMillis  =  currentMillis ;
+		GetDataAndSend();
+		
+		if (firstdata == true)
+		{
+			GetBatteryData();	
+			firstdata=false;
+		}
+		
+	}
+	if (( currentMillis  -  previousBatMillis  >  DELAY_BATTERY ))
+	{
+		previousBatMillis  =  currentMillis ;
+		GetBatteryData();
+		
+		
+	}
+
+	if (( currentMillis  -  previousDisplayMillis  >  DELAY_DISPLAY )||(firstdisplay==true))
+	{
+		previousDisplayMillis  =  currentMillis ;
+		DisplayData();
+		Serial.print("\nClearScreen\n");
+		
+		if (firstdisplay == true)
+		{
+			firstdisplay=false;
+		}	
+		
+	}
+
+	if (( (currentMillis  -  previousDisplayMillis)  >  DURATION_DISPLAY )&&(bScreenOn==true))
+	{
+		previousDisplayMillis  =  currentMillis ;
+		ClearScreen();
+		
+		
+	}
+
+
 }
 
