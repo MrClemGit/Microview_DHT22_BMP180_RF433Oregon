@@ -9,6 +9,7 @@
 #define DELAY_BATTERY 60000 //1Min
 #define DELAY_DISPLAY 60000
 #define DURATION_DISPLAY 10000
+#define DELAY_BUTTON 500
 //#define THN132N
 //#define BTHR968 KO
 //#define BMP_180
@@ -16,6 +17,7 @@
 
 #include "MAX17043.h"
 MAX17043 batteryMonitor;
+#define BATT_CRITIC_LEVEL 10
 long  previousBatMillis  =   0 ;
 float previousBatValue =0;
 float cellVoltage =0;
@@ -27,18 +29,22 @@ unsigned int counterdelay =1;
 long  previousMillis  =   0 ;   // will store last time LED was updated
 bool firstdata = false;
 
-bool firstdisplay=false;
+//bool firstdisplay=false;
 long previousDisplayMillis =0;
 bool bScreenOn=false;
 
 float h = 0;
-// Read temperature as Celsius
-float t = 0;
-// Read temperature as Fahrenheit
-float f = 0;
+float t = 0; // Read temperature as Celsius
+float f = 0; // Read temperature as Fahrenheit
 float hi = 0;
+float _previous_hi = 0;
+float _previous_h = 0;
+float _previous_f = 0;
+float _previous_t = 0;
 
-
+int buttonPin = A0;     	// push button pin
+int buttonState = 0;		// variable to store the pushbutton status
+long  previousButtMillis  =   0 ;
 
 
 
@@ -268,7 +274,7 @@ void setLastBaro(byte *data, byte lastbyte)
 */
 void setBatteryLevel(byte *data, byte level)
 {
-	if(!level) data[4] = 0x0C;
+	if(!level) data[4] = 0x0C; //low level
 	else data[4] = 0x00;
 }
 
@@ -384,6 +390,9 @@ void DisplayDbgMessageOnMV(char*string)
 void setup() {
 	pinMode(TX_PIN, OUTPUT);
 	Wire.begin();
+	
+	pinMode(buttonPin, INPUT);  	// initialize the pushbutton pin as an input
+	digitalWrite(buttonPin,HIGH);  	// set Internal pull-up
 
 	Serial.begin(9600);
 	Serial.println("DHTxx test!");
@@ -436,7 +445,7 @@ void setup() {
 	}
 #endif
 	firstdata=true;
-	firstdisplay=true;
+	//firstdisplay=true;
 
 
 }
@@ -580,7 +589,7 @@ void GetDataAndSend()
 
 	// Compute heat index
 	// Must send in temp in Fahrenheit!
-	hi = dht.computeHeatIndex(f, h);
+	//hi = dht.computeHeatIndex(f, h);
 
 	Serial.print("Humidity: ");
 	Serial.print(h);
@@ -590,66 +599,71 @@ void GetDataAndSend()
 	Serial.print(" °C ");
 	Serial.print(f);
 	Serial.print(" °F\t");
-	Serial.print("Heat index: ");
-	Serial.print(hi);
-	Serial.println(" °F\n");
+	//Serial.print("Heat index: ");
+	//Serial.print(hi);
+	//Serial.println(" °F\n");
+
+	
+
+	if ((h!=_previous_h)||(t!=_previous_t))
+	{
+		Serial.print("GetDataAndSend : new data\n");
+
+		// Get Temperature, humidity and battery level from sensors
+		// (ie: 1wire DS18B20 for température, ...)
+		if (stateOfCharge < BATT_CRITIC_LEVEL)
+			setBatteryLevel(OregonMessageBuffer, 0); // 0 : low, 1 : high
+		else
+			setBatteryLevel(OregonMessageBuffer, 1); // 0 : low, 1 : high
+		setTemperature(OregonMessageBuffer, t);
+
+	#ifndef THN132N
+		// Set Humidity
+		setHumidity(OregonMessageBuffer, h);
+	#endif
+	#ifdef BTHR968
+		setBarometric(OregonMessageBuffer,(int) p0);
+		//setLastBaro(OregonMessageBuffer,0x31);
+	#endif
+		// Calculate the checksum
+		calculateAndSetChecksum(OregonMessageBuffer);
+
+		//TEST
+		/*OregonMessageBuffer[0]= 0x5A;
+	OregonMessageBuffer[1]= 0x6D;
+	OregonMessageBuffer[2]= 0x00;
+	OregonMessageBuffer[3]= 0x7A;
+	OregonMessageBuffer[4]= 0x10;
+	OregonMessageBuffer[5]= 0x23;
+	OregonMessageBuffer[6]= 0x30;
+	OregonMessageBuffer[7]= 0x83;
+	OregonMessageBuffer[8]= 0x86;
+	OregonMessageBuffer[9]= 0x31;*/
 
 
+		// Show the Oregon Message
+		for (byte i = 0; i < sizeof(OregonMessageBuffer); ++i)   {
+			Serial.print(OregonMessageBuffer[i] >> 4, HEX);
+			Serial.print(OregonMessageBuffer[i] & 0x0F, HEX);
+		}
 
+		// Send the Message over RF
+		sendOregon(OregonMessageBuffer, sizeof(OregonMessageBuffer));
+		// Send a "pause"
+		SEND_LOW();
+		delayMicroseconds(TWOTIME*8);
+		// Send a copie of the first message. The v2.1 protocol send the
+		// message two time
+		sendOregon(OregonMessageBuffer, sizeof(OregonMessageBuffer));
 
-
-
-
-
-
-
-	// Get Temperature, humidity and battery level from sensors
-	// (ie: 1wire DS18B20 for température, ...)
-	setBatteryLevel(OregonMessageBuffer, 1); // 0 : low, 1 : high
-	setTemperature(OregonMessageBuffer, t);
-
-#ifndef THN132N
-	// Set Humidity
-	setHumidity(OregonMessageBuffer, h);
-#endif
-#ifdef BTHR968
-	setBarometric(OregonMessageBuffer,(int) p0);
-	//setLastBaro(OregonMessageBuffer,0x31);
-#endif
-	// Calculate the checksum
-	calculateAndSetChecksum(OregonMessageBuffer);
-
-	//TEST
-	/*OregonMessageBuffer[0]= 0x5A;
-OregonMessageBuffer[1]= 0x6D;
-OregonMessageBuffer[2]= 0x00;
-OregonMessageBuffer[3]= 0x7A;
-OregonMessageBuffer[4]= 0x10;
-OregonMessageBuffer[5]= 0x23;
-OregonMessageBuffer[6]= 0x30;
-OregonMessageBuffer[7]= 0x83;
-OregonMessageBuffer[8]= 0x86;
-OregonMessageBuffer[9]= 0x31;*/
-
-
-	// Show the Oregon Message
-	for (byte i = 0; i < sizeof(OregonMessageBuffer); ++i)   {
-		Serial.print(OregonMessageBuffer[i] >> 4, HEX);
-		Serial.print(OregonMessageBuffer[i] & 0x0F, HEX);
+		// Wait for 30 seconds before send a new message
+		SEND_LOW();
+		
+		_previous_h=h;
+		_previous_t=t;
 	}
-
-	// Send the Message over RF
-	sendOregon(OregonMessageBuffer, sizeof(OregonMessageBuffer));
-	// Send a "pause"
-	SEND_LOW();
-	delayMicroseconds(TWOTIME*8);
-	// Send a copie of the first message. The v2.1 protocol send the
-	// message two time
-	sendOregon(OregonMessageBuffer, sizeof(OregonMessageBuffer));
-
-	// Wait for 30 seconds before send a new message
-	SEND_LOW();
-
+	else
+		Serial.print("GetDataAndSend : same data\n");	
 
 }
 void GetBatteryData()
@@ -747,7 +761,26 @@ void ClearScreen()
 	
 
 }
-
+bool GetButtonState()
+{
+	Serial.print("GetButtonState ...\n");
+	int l_iState = 0;
+	l_iState = digitalRead(buttonPin);
+	if (l_iState!=buttonState)
+	{
+		Serial.print("GetButtonState State Changed\n");
+		buttonState = l_iState;
+		if (bScreenOn == false)
+			bScreenOn = true;
+		return true;
+	
+	}
+	else
+	{
+		return false;
+	
+	}
+}
 void loop() {
 
 
@@ -764,38 +797,43 @@ void loop() {
 		
 		if (firstdata == true)
 		{
-			GetBatteryData();	
+			GetBatteryData();
+			DisplayData();			
 			firstdata=false;
 		}
 		
 	}
-	if (( currentMillis  -  previousBatMillis  >  DELAY_BATTERY ))
+
+
+	
+/*	if (( currentMillis  -  previousBatMillis  >  DELAY_BATTERY ))
 	{
 		previousBatMillis  =  currentMillis ;
 		GetBatteryData();
 		
 		
 	}
-
-	if (( currentMillis  -  previousDisplayMillis  >  DELAY_DISPLAY )||(firstdisplay==true))
+*/
+	if (( currentMillis  -  previousButtMillis)  >  DELAY_BUTTON )
 	{
-		previousDisplayMillis  =  currentMillis ;
-		DisplayData();
-		Serial.print("\nClearScreen\n");
-		
-		if (firstdisplay == true)
+		previousButtMillis  =  currentMillis ;
+		if (GetButtonState() == true) // if changed state
 		{
-			firstdisplay=false;
-		}	
+			if (bScreenOn==true)
+			{
+				GetBatteryData();
+				DisplayData();
+			}
+		
+		}
+		
 		
 	}
-
 	if (( (currentMillis  -  previousDisplayMillis)  >  DURATION_DISPLAY )&&(bScreenOn==true))
 	{
 		previousDisplayMillis  =  currentMillis ;
 		ClearScreen();
-		
-		
+				
 	}
 
 
