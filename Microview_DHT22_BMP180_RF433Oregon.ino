@@ -5,7 +5,7 @@
 #include <MicroView.h>
 
 #include <Wire.h>
-#define DELAY_MEASURE 60000		//1min
+#define DELAY_MEASURE 120000		//1min
 #define DELAY_BATTERY 60000 //1Min
 #define DELAY_DISPLAY 60000
 #define DURATION_DISPLAY 10000
@@ -427,7 +427,8 @@ void setup() {
 	uView.clear(ALL);	// erase hardware memory inside the OLED controller
 	uView.display();	// display the content in the buffer memory, by default it is the MicroView logo
 	uView.clear(PAGE);	// erase the memory buffer, when next uView.display() is called, the OLED will be cleared.
-	dht.begin();
+	
+	//dht.begin();
 
 #ifdef BMP_180
 	if (pressure.begin())
@@ -454,7 +455,8 @@ void GetDataAndSend()
 {
 	Serial.print("\nGetDataAndSend\n");
 	// Wait a few seconds between measurements.
-	if (firstdata == true)
+	//if (firstdata == true)
+	dht.begin();
 	delay(2000);
 	
 	char status;
@@ -575,10 +577,10 @@ void GetDataAndSend()
 	// Read temperature as Celsius
 	t = dht.readTemperature();
 	// Read temperature as Fahrenheit
-	f = dht.readTemperature(true);
+	//f = dht.readTemperature(true);
 
 	// Check if any reads failed and exit early (to try again).
-	if (isnan(h) || isnan(t) || isnan(f)) {
+	if (isnan(h) || isnan(t) /*|| isnan(f)*/) {
 		Serial.println("Failed to read from DHT sensor!");
 		DisplayDbgMessageOnMV("Failed to read from DHT sensor!");
 		return;
@@ -597,15 +599,15 @@ void GetDataAndSend()
 	Serial.print("Temperature: ");
 	Serial.print(t);
 	Serial.print(" °C ");
-	Serial.print(f);
-	Serial.print(" °F\t");
+	/*Serial.print(f);
+	Serial.print(" °F\t");*/
 	//Serial.print("Heat index: ");
 	//Serial.print(hi);
 	//Serial.println(" °F\n");
 
-	
+	digitalWrite(_pin, LOW);
 
-	if ((h!=_previous_h)||(t!=_previous_t))
+	if ((unsigned int (h)!=unsigned int (_previous_h))||(t!=_previous_t))
 	{
 		Serial.print("GetDataAndSend : new data\n");
 
@@ -763,15 +765,16 @@ void ClearScreen()
 }
 bool GetButtonState()
 {
-	Serial.print("GetButtonState ...\n");
+	//Serial.print("GetButtonState ...\n");
 	int l_iState = 0;
 	l_iState = digitalRead(buttonPin);
 	if (l_iState!=buttonState)
 	{
 		Serial.print("GetButtonState State Changed\n");
 		buttonState = l_iState;
-		if (bScreenOn == false)
+		if ((bScreenOn == false))
 			bScreenOn = true;
+                 
 		return true;
 	
 	}
@@ -817,10 +820,12 @@ void loop() {
 	if (( currentMillis  -  previousButtMillis)  >  DELAY_BUTTON )
 	{
 		previousButtMillis  =  currentMillis ;
+		
 		if (GetButtonState() == true) // if changed state
 		{
-			if (bScreenOn==true)
+			if ((bScreenOn==true)&&(buttonState == LOW))
 			{
+				previousDisplayMillis = currentMillis;
 				GetBatteryData();
 				DisplayData();
 			}
@@ -831,7 +836,6 @@ void loop() {
 	}
 	if (( (currentMillis  -  previousDisplayMillis)  >  DURATION_DISPLAY )&&(bScreenOn==true))
 	{
-		previousDisplayMillis  =  currentMillis ;
 		ClearScreen();
 				
 	}
