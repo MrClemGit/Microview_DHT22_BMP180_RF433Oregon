@@ -423,10 +423,6 @@ void setup() {
 	setId(OregonMessageBuffer, 0xBB);
 #endif
 
-	uView.begin();		// begin of MicroView
-	uView.clear(ALL);	// erase hardware memory inside the OLED controller
-	uView.display();	// display the content in the buffer memory, by default it is the MicroView logo
-	uView.clear(PAGE);	// erase the memory buffer, when next uView.display() is called, the OLED will be cleared.
 	
 	//dht.begin();
 
@@ -605,9 +601,9 @@ void GetDataAndSend()
 	//Serial.print(hi);
 	//Serial.println(" °F\n");
 
-	digitalWrite(_pin, LOW);
+	digitalWrite(DHTPIN, LOW);
 
-	if ((unsigned int (h)!=unsigned int (_previous_h))||(t!=_previous_t))
+	if (((unsigned int) h!=(unsigned int) _previous_h)||(t!=_previous_t))
 	{
 		Serial.print("GetDataAndSend : new data\n");
 
@@ -709,7 +705,9 @@ Serial.println("%");*/
 void DisplayData()
 {
 	Serial.print("\nDisplayData\n");
-	uView.clear(PAGE);	// erase the memory buffer, when next uView.display() is called, the OLED will be cleared.
+	uView.begin();		// begin of MicroView
+	
+        uView.clear(PAGE);	// erase the memory buffer, when next uView.display() is called, the OLED will be cleared.
 	uView.setCursor(0,0);
 	uView.print("Hum ");
 	uView.setCursor(30,0);
@@ -759,6 +757,7 @@ void ClearScreen()
 	Serial.print("\nClearScreen\n");	
 	uView.clear(PAGE);
 	uView.display();
+	uView.end();
 	bScreenOn = false;
 	
 
