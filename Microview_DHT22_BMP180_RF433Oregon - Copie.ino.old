@@ -6,10 +6,6 @@
 
 #include <Wire.h>
 
-//#include <Narcoleptic.h>
-#include <JeeLib.h>
-ISR(WDT_vect) { Sleepy::watchdogEvent(); }
-
 
 #define DELAY_MEASURE 120000		//1min
 #define DELAY_BATTERY 60000 //1Min
@@ -20,18 +16,18 @@ ISR(WDT_vect) { Sleepy::watchdogEvent(); }
 //#define BTHR968 KO
 //#define BMP_180
 //#define LI_FUELGAUGELIB
-//#define MAX17043LIB
+#define MAX17043LIB
 
-/*#ifdef MAX17043LIB
+#ifdef MAX17043LIB
 #include "MAX17043.h"
 MAX17043 batteryMonitor;
-#endif*/
+#endif
 
-/*#ifdef LI_FUELGAUGELIB
+#ifdef LI_FUELGAUGELIB
 #include "LiFuelGauge.h"
 LiFuelGauge batteryMonitor1(MAX17043);
 
-#endif*/
+#endif
 
 #define BATT_CRITIC_LEVEL 10
 long  previousBatMillis  =   0 ;
@@ -64,29 +60,6 @@ int buttonState = 0;		// variable to store the pushbutton status
 long  previousButtMillis  =   0 ;
 
 
-long readVcc() {
-    bitClear(PRR, PRADC); ADCSRA |= bit(ADEN); // Enable the ADC
-    long result;
-    // Read 1.1V reference against Vcc
-    #if defined (__AVR_ATtiny24__) || defined(__AVR_ATtiny44__) || defined(__AVR_ATtiny84__)
-     ADMUX = _BV(MUX5) | _BV(MUX0); // For ATtiny84
-    #elif defined (__AVR_ATtiny25__) || defined(__AVR_ATtiny45__) || defined(__AVR_ATtiny85__)
-     ADMUX = _BV(MUX3) | _BV(MUX2);
-    #else
-     ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);  // For ATmega328
-    #endif
-    delay(2); // Wait for Vref to settle
-    ADCSRA |= _BV(ADSC); // Convert
-    while (bit_is_set(ADCSRA,ADSC));
-    result = ADCL;
-    result |= ADCH<<8;
-    result = 1126400L / result; // Back-calculate Vcc in mV
-    ADCSRA &= ~ bit(ADEN); bitSet(PRR, PRADC); // Disable the ADC to save power
-    return result; // Vcc in millivolts
-}
-
-
-
 
 // You will need to create an SFE_BMP180 object, here called "pressure":
 
@@ -98,10 +71,6 @@ double T,P,p0,a;
 #endif
 
 #define DHTPIN 2     // what pin we're connected to
-#define DHTPIN_PWR 4     // 
-#define RFPIN_PWR 5     //
-const byte TX_PIN = 3;
-
 
 // Uncomment whatever type you're using!
 //#define DHTTYPE DHT11   // DHT 11
@@ -127,7 +96,7 @@ DHT dht(DHTPIN, DHTTYPE);
 //DHT dht(DHTPIN, DHTTYPE, 30);
 
 
-
+const byte TX_PIN = 3;
 
 const unsigned long TIME = 512;
 const unsigned long TWOTIME = TIME*2;
@@ -469,12 +438,6 @@ void setup() {
 
 	
 	//dht.begin();
-	pinMode(DHTPIN_PWR,OUTPUT);
-	digitalWrite(DHTPIN_PWR,LOW);
-	pinMode(RFPIN_PWR,OUTPUT);
-	digitalWrite(RFPIN_PWR,LOW);
-
-
 
 #ifdef BMP_180
 	if (pressure.begin())
@@ -505,10 +468,9 @@ void GetDataAndSend()
 	Serial.print("\nGetDataAndSend\n");
 	// Wait a few seconds between measurements.
 	//if (firstdata == true)
-	digitalWrite(DHTPIN_PWR,HIGH);
 	dht.begin();
 	delay(2000);
-	//Narcoleptic.delay(2000);
+	
 	char status;
 #ifdef BMP_180
 
@@ -539,7 +501,7 @@ void GetDataAndSend()
 	{
 		// Wait for the measurement to complete:
 		delay(status);
-                
+
 		// Retrieve the completed temperature measurement:
 		// Note that the measurement is stored in the variable T.
 		// Function returns 1 if successful, 0 if failure.
@@ -563,7 +525,7 @@ void GetDataAndSend()
 			{
 				// Wait for the measurement to complete:
 				delay(status);
-                                //  Narcoleptic.delay(status);
+
 				// Retrieve the completed pressure measurement:
 				// Note that the measurement is stored in the variable P.
 				// Note also that the function requires the previous temperature measurement (T).
@@ -628,7 +590,7 @@ void GetDataAndSend()
 	t = dht.readTemperature();
 	// Read temperature as Fahrenheit
 	//f = dht.readTemperature(true);
-	digitalWrite(DHTPIN_PWR,LOW);
+
 	// Check if any reads failed and exit early (to try again).
 	if (isnan(h) || isnan(t) /*|| isnan(f)*/) {
 		Serial.println("Failed to read from DHT sensor!");
@@ -699,7 +661,6 @@ void GetDataAndSend()
 			Serial.print(OregonMessageBuffer[i] & 0x0F, HEX);
 		}
 
-		digitalWrite(RFPIN_PWR,HIGH);
 		// Send the Message over RF
 		sendOregon(OregonMessageBuffer, sizeof(OregonMessageBuffer));
 		// Send a "pause"
@@ -711,7 +672,7 @@ void GetDataAndSend()
 
 		// Wait for 30 seconds before send a new message
 		SEND_LOW();
-		digitalWrite(RFPIN_PWR,LOW);
+		
 		_previous_h=h;
 		_previous_t=t;
 	}
@@ -730,17 +691,7 @@ void GetBatteryData()
 #endif        
 	
 
-cellVoltage = readVcc()/1000.0;
-cellVoltage=0;
-//moyenne sur 5 prises
-for (int i =0;i<5;i++)
-{
- cellVoltage += (readVcc()/1000.0)/((i+1)*1.0); 
- 
-}
-
-//stateOfCharge = cellVoltage*100.0/4.3;	
-stateOfCharge= map(cellVoltage,3.3,4.2,0,100);
+	
 
 #ifdef LI_FUELGAUGELIB
         batteryMonitor1.wake();
@@ -860,16 +811,16 @@ bool GetButtonState()
 void loop() {
 
 
-	//currentMillis  =  millis ();
-        currentMillis = millis() + 1000;
-        
+	currentMillis  =  millis ();
+
+
+
 	if (( currentMillis  -  previousMillis  >  DELAY_MEASURE )||(firstdata==true))
 	{
 		
 		
 		previousMillis  =  currentMillis ;
 		GetDataAndSend();
-                GetBatteryData();
 		
 		if (firstdata == true)
 		{
@@ -913,13 +864,6 @@ void loop() {
 		ClearScreen();
 				
 	}
-       
-  //for (byte i = 0; i < 2; ++i)
-      Sleepy::loseSomeTime(1000);
-  // put the processor to sleep for 8 seconds
-  //Narcoleptic.delay(1000);
-
-        
 
 
 }
